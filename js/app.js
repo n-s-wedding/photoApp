@@ -10,7 +10,7 @@
     selected: new Set(),
     lbIndex: -1,
     lbVer: 'cheki',
-    uploading: 0
+    pendingOriginals: 0
   };
 
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
@@ -46,8 +46,7 @@
   }
 
   function visibleItems() {
-    if (state.filter === '__mine') return state.items.filter(x => x.mine);
-    return state.filter ? state.items.filter(x => x.author === state.filter) : state.items;
+    return state.filter === '__mine' ? state.items.filter(x => x.mine) : state.items;
   }
 
   function setImg(img, fileId, size) {
@@ -58,12 +57,17 @@
     img.src = api.thumbUrl(fileId, size);
   }
 
-  /* ---------- author ---------- */
-  const authorInput = $('author');
-  try { authorInput.value = localStorage.getItem('wps_author') || ''; } catch (e) {}
-  authorInput.addEventListener('change', () => {
-    try { localStorage.setItem('wps_author', authorInput.value.trim()); } catch (e) {}
-  });
+  // 一覧の画像は表示幅に合わせた大きさで取得する（大きすぎると読み込みが遅い）
+  const THUMB = 400;
+
+  /* ---------- 前回の一覧（開いた瞬間に表示するため端末に保存） ---------- */
+  const LIST_KEY = 'wps_list_v2';
+  function loadSavedList() {
+    try { return JSON.parse(localStorage.getItem(LIST_KEY) || '[]'); } catch (e) { return []; }
+  }
+  function saveList() {
+    try { localStorage.setItem(LIST_KEY, JSON.stringify(state.items.slice(0, 300))); } catch (e) {}
+  }
 
   /* ---------- gallery ---------- */
   const tiles = new Map();
@@ -78,15 +82,15 @@
     el.style.setProperty('--r', hashRot(item.id));
     el.style.setProperty('--ar', item.w && item.h ? `${item.w} / ${item.h}` : '54 / 86');
     const img = document.createElement('img');
-    img.alt = item.author ? `${item.author}さんの写真` : '写真';
+    img.alt = item.message || '写真';
     img.loading = 'lazy';
     img.decoding = 'async';
-    setImg(img, item.id, wide ? 1000 : 600);
+    setImg(img, item.id, wide ? THUMB * 2 : THUMB);
     el.appendChild(img);
-    if (item.author) {
+    if (item.message) {
       const who = document.createElement('span');
       who.className = 'who';
-      who.textContent = item.author;
+      who.textContent = item.message;
       el.appendChild(who);
     }
     const check = document.createElement('span');
@@ -118,13 +122,10 @@
   }
 
   function renderFilters() {
-    const authors = [...new Set(state.items.map(x => x.author).filter(Boolean))];
     const box = $('filters');
     const hasMine = state.items.some(x => x.mine);
-    box.hidden = authors.length < 2 && !hasMine;
-    const opts = [['', 'すべて']];
-    if (hasMine) opts.push(['__mine', '自分の写真']);
-    authors.forEach(a => opts.push([a, a]));
+    box.hidden = !hasMine;
+    const opts = [['', 'すべて'], ['__mine', '自分の写真']];
     box.replaceChildren(...opts.map(([v, label]) => {
       const b = document.createElement('button');
       b.type = 'button';
@@ -141,6 +142,7 @@
       const changed = items.length !== state.items.length ||
         items.some((x, i) => x.id !== state.items[i].id);
       state.items = items;
+      saveList();
       const ids = new Set(items.map(x => x.id));
       [...tiles.keys()].forEach(id => { if (!ids.has(id)) tiles.delete(id); });
       [...state.selected].forEach(id => { if (!ids.has(id)) state.selected.delete(id); });
@@ -157,9 +159,14 @@
   }
 
   /* ---------- upload ---------- */
+  const messageInput = $('message');
+
   async function handleFiles(fileList) {
     const files = [...fileList].filter(f => /^image\//.test(f.type) || /\.(heic|heif|jpe?g|png|webp)$/i.test(f.name));
     if (!files.length) return;
+    // 選んだ写真にだけメッセージを付け、次の写真用に欄を空にする
+    const message = messageInput.value.trim();
+    messageInput.value = '';
     const queue = $('queue');
     queue.hidden = false;
     const jobs = files.map(file => {
@@ -167,50 +174,83 @@
       el.className = 'q-item';
       el.innerHTML = '<div class="q-photo"><div class="q-blank"></div></div><span class="q-state">現像中…</span>';
       queue.prepend(el);
-      return { file, el };
+      return { file, el, message };
     });
-    state.uploading += jobs.length;
-    for (const job of jobs) {
-      await runJob(job);
-      state.uploading--;
-    }
+    for (const job of jobs) await runJob(job);
   }
 
-  async function runJob({ file, el }) {
+  // チェキ版を送ったらすぐアルバムに出し、元写真は裏で順番に送る
+  async function runJob(job) {
+    const { file, el } = job;
     const stateEl = el.querySelector('.q-state');
     const photo = el.querySelector('.q-photo');
     el.classList.remove('error');
+    el.onclick = null;
     try {
-      stateEl.textContent = '現像中…';
-      const cheki = await window.ChekiFilter.makeCheki(file, { date: cfg.EVENT_DATE });
-      const url = URL.createObjectURL(cheki.blob);
-      photo.classList.toggle('wide', cheki.format === 'wide');
-      photo.innerHTML = '';
-      const img = document.createElement('img');
-      img.src = url;
-      photo.appendChild(img);
-
+      if (!job.cheki) {
+        stateEl.textContent = '現像中…';
+        job.cheki = await window.ChekiFilter.makeCheki(file, { date: cfg.EVENT_DATE });
+        photo.classList.toggle('wide', job.cheki.format === 'wide');
+        photo.innerHTML = '';
+        const img = document.createElement('img');
+        img.src = URL.createObjectURL(job.cheki.blob);
+        photo.appendChild(img);
+      }
       stateEl.textContent = '送信中…';
-      const item = await api.upload({
-        processed: cheki.blob,
-        original: file,
-        author: authorInput.value.trim(),
-        w: cheki.width,
-        h: cheki.height
+      job.item = await api.upload({
+        processed: job.cheki.blob,
+        message: job.message,
+        w: job.cheki.width,
+        h: job.cheki.height
       });
-      el.classList.add('done');
-      stateEl.textContent = '届きました';
-      if (!state.items.some(x => x.id === item.id)) {
-        state.items.unshift(item);
+      if (!state.items.some(x => x.id === job.item.id)) {
+        state.items.unshift(job.item);
+        saveList();
         render();
       }
+      queueOriginal(job);
     } catch (e) {
       console.error(e);
       el.classList.add('error');
       stateEl.textContent = '失敗・タップで再送';
-      el.onclick = () => { el.onclick = null; runJob({ file, el }); };
+      el.onclick = () => runJob(job);
     }
   }
+
+  let originalChain = Promise.resolve();
+  function queueOriginal(job) {
+    const stateEl = job.el.querySelector('.q-state');
+    job.el.classList.add('done');
+    stateEl.textContent = '届きました';
+    state.pendingOriginals++;
+    originalChain = originalChain.then(async () => {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const originalId = await api.uploadOriginal(job.item.id, job.file);
+          state.items.concat(job.item).forEach(x => { if (x.id === job.item.id) x.originalId = originalId; });
+          saveList();
+          state.pendingOriginals--;
+          return;
+        } catch (e) {
+          console.warn(e);
+          await new Promise(r => setTimeout(r, 2000 * attempt));
+        }
+      }
+      state.pendingOriginals--;
+      job.el.classList.add('error');
+      stateEl.textContent = '元写真が未送信・タップで再送';
+      job.el.onclick = () => {
+        job.el.onclick = null;
+        job.el.classList.remove('error');
+        queueOriginal(job);
+      };
+    });
+  }
+
+  // 元写真の送信中にページを閉じようとしたら確認する
+  window.addEventListener('beforeunload', e => {
+    if (state.pendingOriginals > 0) { e.preventDefault(); e.returnValue = ''; }
+  });
 
   $('pickFiles').addEventListener('change', e => { handleFiles(e.target.files); e.target.value = ''; });
   $('takePhoto').addEventListener('change', e => { handleFiles(e.target.files); e.target.value = ''; });
@@ -270,7 +310,7 @@
       while (next < list.length) {
         const i = next++;
         const item = list[i];
-        const fileId = ver === 'original' ? item.originalId : item.id;
+        const fileId = ver === 'original' ? (item.originalId || item.id) : item.id;
         const { blob, name } = await api.getBlob(fileId);
         out[i] = new File([blob], name || `photo_${i + 1}.jpg`, { type: blob.type || 'image/jpeg' });
         onProgress(++done / list.length);
@@ -382,13 +422,33 @@
     const item = list[state.lbIndex];
     if (!item) return closeLightbox();
     const img = $('lbImg');
-    img.removeAttribute('src');
-    setImg(img, state.lbVer === 'original' ? item.originalId : item.id, 1600);
-    $('lbCaption').textContent = item.author ? `photo by ${item.author}` : '';
+    const fileId = state.lbVer === 'original' ? (item.originalId || item.id) : item.id;
+    // 一覧で読み込み済みの小さい画像をすぐ出し、大きい画像が届いたら差し替える
+    const tile = tiles.get(item.id);
+    const tileImg = state.lbVer === 'cheki' && tile && tile.querySelector('img');
+    if (tileImg && tileImg.complete && tileImg.naturalWidth) img.src = tileImg.currentSrc || tileImg.src;
+    else img.removeAttribute('src');
+    const big = new Image();
+    big.onload = () => {
+      const cur = visibleItems()[state.lbIndex];
+      if (cur && cur.id === item.id && big.dataset.ver === state.lbVer) img.src = big.src;
+    };
+    big.dataset.ver = state.lbVer;
+    setImg(big, fileId, 1600);
+    preloadNeighbors();
+    $('lbCaption').textContent = state.lbVer === 'original' && !item.originalId
+      ? '元写真はまだ届いていません（チェキ版を表示中）'
+      : item.message || '';
     document.querySelectorAll('.seg button').forEach(b => b.classList.toggle('on', b.dataset.ver === state.lbVer));
     $('lbDelete').hidden = !item.mine;
     $('lbPrev').hidden = state.lbIndex <= 0;
     $('lbNext').hidden = state.lbIndex >= list.length - 1;
+  }
+  function preloadNeighbors() {
+    const list = visibleItems();
+    [state.lbIndex + 1, state.lbIndex - 1].forEach(i => {
+      if (list[i]) new Image().src = api.thumbUrl(list[i].id, 1600);
+    });
   }
   function stepLightbox(d) {
     const n = state.lbIndex + d;
@@ -442,6 +502,10 @@
 
   /* ---------- start ---------- */
   if (api.mode === 'mock') toast('お試しモード（写真はこの端末内だけに保存されます）', 4000);
+  if (api.mode === 'remote') {
+    state.items = loadSavedList();
+    if (state.items.length) render();
+  }
   refresh();
   refresh._timer = setInterval(() => {
     if (document.visibilityState === 'visible') refresh();

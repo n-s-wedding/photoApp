@@ -67,15 +67,18 @@
     async list() {
       return (await call('list')).items;
     },
-    async upload({ processed, original, author, w, h }) {
-      const [p, o] = await Promise.all([blobToBase64(processed), blobToBase64(original)]);
-      const res = await call('upload', {
-        processed: p,
-        original: o,
-        originalMime: original.type || 'image/jpeg',
-        author, w, h
-      });
+    // チェキ版だけ先に送る（元写真は uploadOriginal で後から）
+    async upload({ processed, message, w, h }) {
+      const res = await call('upload', { processed: await blobToBase64(processed), message, w, h });
       return res.item;
+    },
+    async uploadOriginal(id, original) {
+      const res = await call('original', {
+        id,
+        original: await blobToBase64(original),
+        originalMime: original.type || 'image/jpeg'
+      });
+      return res.originalId;
     },
     async getBlob(fileId) {
       const res = await call('get', { id: fileId });
@@ -84,11 +87,12 @@
     async remove(id) {
       await call('delete', { id });
     },
+    // lh3 は転送なしで画像が返るので先に使う（だめなときは drive の thumbnail）
     thumbUrl(fileId, size) {
-      return 'https://drive.google.com/thumbnail?id=' + encodeURIComponent(fileId) + '&sz=w' + (size || 800);
+      return 'https://lh3.googleusercontent.com/d/' + encodeURIComponent(fileId) + '=w' + (size || 800);
     },
     altThumbUrl(fileId, size) {
-      return 'https://lh3.googleusercontent.com/d/' + encodeURIComponent(fileId) + '=w' + (size || 800);
+      return 'https://drive.google.com/thumbnail?id=' + encodeURIComponent(fileId) + '&sz=w' + (size || 800);
     }
   };
 
@@ -100,14 +104,19 @@
     async list() {
       return [...store.values()].filter(x => x.item).map(x => x.item).sort((a, b) => (a.uploadedAt < b.uploadedAt ? 1 : -1));
     },
-    async upload({ processed, original, author, w, h }) {
+    async upload({ processed, message, w, h }) {
       await new Promise(r => setTimeout(r, 400));
       const id = 'mock' + (++seq);
-      const originalId = id + '_o';
-      const item = { id, originalId, author, w, h, uploadedAt: new Date().toISOString(), mine: true };
+      const item = { id, originalId: '', message, w, h, uploadedAt: new Date().toISOString(), mine: true };
       store.set(id, { item, blob: processed });
-      store.set(originalId, { blob: original });
       return item;
+    },
+    async uploadOriginal(id, original) {
+      await new Promise(r => setTimeout(r, 800));
+      const originalId = id + '_o';
+      store.set(originalId, { blob: original });
+      store.get(id).item.originalId = originalId;
+      return originalId;
     },
     async getBlob(fileId) {
       const x = store.get(fileId);
@@ -116,7 +125,7 @@
     },
     async remove(id) {
       const x = store.get(id);
-      if (x) store.delete(x.item.originalId);
+      if (x && x.item.originalId) store.delete(x.item.originalId);
       store.delete(id);
     },
     thumbUrl(fileId) {
