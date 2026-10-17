@@ -4,9 +4,9 @@ window.APP_CONFIG = {
   // Google Apps Script をウェブアプリとしてデプロイしたURL（.../exec）
   GAS_URL: 'https://script.google.com/macros/s/AKfycbyJvhCml7BZ9ShVoVY21JVdjNwJKETZIqubq4lV-tuqLfUdhxoSRy96p96okORj6ntK/exec',
   // 手順2-6のURL
-  EVENT_DATE: '2026-10-12',  
+  EVENT_DATE: '2026-10-30',  
   // 挙式日（写真の日付スタンプにも使います）
-  VENUE: 'Karuizawa',
+  VENUE: 'Karuizawa OAK',
 
   // ギャラリーの自動更新間隔（秒）
   REFRESH_SEC: 20
