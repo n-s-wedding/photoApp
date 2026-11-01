@@ -80,6 +80,9 @@
       });
       return res.originalId;
     },
+    async setMessage(id, message) {
+      await call('comment', { id, message });
+    },
     async getBlob(fileId) {
       const res = await call('get', { id: fileId });
       return { blob: base64ToBlob(res.data, res.mimeType), name: res.name };
@@ -117,6 +120,10 @@
       store.set(originalId, { blob: original });
       store.get(id).item.originalId = originalId;
       return originalId;
+    },
+    async setMessage(id, message) {
+      await new Promise(r => setTimeout(r, 400));
+      store.get(id).item.message = message;
     },
     async getBlob(fileId) {
       const x = store.get(fileId);

@@ -284,5 +284,98 @@
     return { blob, width: cardW, height: cardH, format };
   }
 
-  window.ChekiFilter = { makeCheki };
+  /* ---------- 保存用：チェキの余白にコメントを書き入れる ---------- */
+  const CAPTION_FONT = '"Shippori Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif';
+  const NO_LINE_START = '、。，．！？）」』ー…〜';
+
+  // 日本語は1文字ずつ、英語は単語の区切りで折り返す
+  function wrapCaption(ctx, text, maxWidth) {
+    const fits = s => ctx.measureText(s).width <= maxWidth;
+    const tokens = (text.match(/[\w'’-]+[,.!?]*|./gu) || []).flatMap(t => (fits(t) ? [t] : [...t]));
+    const lines = [];
+    let line = '';
+    for (const t of tokens) {
+      if (!line || fits(line + t)) {
+        line += t;
+      } else if (NO_LINE_START.includes(t) && [...line].length > 1) {
+        // 句読点は行頭に置かず、前の1文字と一緒に次の行へ送る
+        const chars = [...line];
+        const prev = chars.pop();
+        lines.push(chars.join(''));
+        line = prev + t;
+      } else {
+        lines.push(line.trimEnd());
+        line = t.trimStart();
+      }
+    }
+    if (line) lines.push(line);
+    return lines;
+  }
+
+  // チェキの下の白い余白の位置（w×h はチェキ全体の大きさ）
+  function captionArea(w, h) {
+    const spec = SPEC[w > h ? 'wide' : 'mini'];
+    const pxPerMm = w / spec.cardW;
+    const top = (spec.top + spec.imgH) * pxPerMm;
+    return {
+      top,
+      height: h - top,
+      left: spec.left * pxPerMm,
+      width: w - spec.left * 2 * pxPerMm,
+      pxPerMm
+    };
+  }
+
+  async function loadCaptionFont(text) {
+    if (!document.fonts || !document.fonts.load) return;
+    try {
+      await Promise.race([
+        document.fonts.load('500 40px "Shippori Mincho"', text),
+        new Promise(r => setTimeout(r, 2000))
+      ]);
+    } catch (e) { /* 読み込めなければ端末の明朝体で描く */ }
+  }
+
+  /**
+   * チェキ画像の下の余白にコメントを書き入れた画像を作る（ドライブの写真はそのまま）
+   * @returns {Promise<Blob>}
+   */
+  async function addCaption(blob, text) {
+    const src = await loadImage(blob);
+    const w = src.width || src.naturalWidth;
+    const h = src.height || src.naturalHeight;
+    const card = makeCanvas(w, h);
+    const c = card.getContext('2d');
+    c.drawImage(src, 0, 0);
+    if (src.close) src.close();
+
+    await loadCaptionFont(text);
+
+    const area = captionArea(w, h);
+    const pxPerMm = area.pxPerMm;
+    const areaTop = area.top;
+    const areaH = area.height;
+    const maxW = area.width;
+    const maxH = areaH - 4 * pxPerMm;
+    // 短いコメントは大きく、長いコメントは余白に収まるまで小さくする
+    let size = 4.4 * pxPerMm;
+    let lines = [];
+    for (; size >= 2.2 * pxPerMm; size -= 0.2 * pxPerMm) {
+      c.font = `500 ${size}px ${CAPTION_FONT}`;
+      lines = wrapCaption(c, text, maxW);
+      if (lines.length * size * 1.35 <= maxH) break;
+    }
+    size = Math.max(size, 2.2 * pxPerMm);
+    c.font = `500 ${size}px ${CAPTION_FONT}`;
+    const lineH = size * 1.35;
+    c.fillStyle = '#4f4336';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    const y0 = areaTop + areaH / 2 - (lines.length - 1) * lineH / 2;
+    lines.forEach((line, i) => c.fillText(line, w / 2, y0 + i * lineH));
+
+    return toBlob(card, 0.92);
+  }
+
+  window.ChekiFilter = { makeCheki, addCaption, captionArea };
 })();
