@@ -107,10 +107,9 @@ h2 small { font-size: 12px; color: var(--ink-soft); letter-spacing: .1em; }
 }
 .note { margin: 4px 0 18px; font-size: 13px; color: var(--ink-soft); }
 
-.field { display: block; margin-bottom: 18px; }
-.field span { display: block; font-size: 12px; color: var(--ink-soft); margin-bottom: 4px; letter-spacing: .1em; }
-.field input {
+.c-item input, .sheet-input {
   width: 100%;
+  min-width: 0;
   padding: 10px 2px;
   font-size: 16px; /* iOSでズームしない */
   border: 0;
@@ -119,7 +118,7 @@ h2 small { font-size: 12px; color: var(--ink-soft); letter-spacing: .1em; }
   outline: none;
   border-radius: 0;
 }
-.field input:focus { border-bottom-color: var(--oak); }
+.c-item input:focus, .sheet-input:focus { border-bottom-color: var(--oak); }
 
 .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
@@ -161,6 +160,14 @@ h2 small { font-size: 12px; color: var(--ink-soft); letter-spacing: .1em; }
 .chip.on { background: var(--sage); border-color: var(--sage); color: #fff; }
 .chip.ghost { background: transparent; }
 .chip.danger { color: var(--danger); border-color: rgba(165, 82, 63, .4); }
+
+/* 写真を選んだあとのコメント入力 */
+.compose { margin-top: 18px; padding-top: 18px; border-top: 1px dashed var(--line); }
+.compose-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px; }
+.c-item { display: grid; grid-template-columns: 56px minmax(0, 1fr) 32px; gap: 10px; align-items: center; }
+.c-item img { display: block; width: 56px; height: 56px; object-fit: cover; background: #efe9de; box-shadow: 0 1px 3px rgba(58, 40, 20, .25); }
+.c-remove { width: 32px; height: 32px; padding: 0; border: 0; background: none; color: var(--ink-soft); font-size: 20px; line-height: 1; cursor: pointer; }
+.compose-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 
 /* アップロード中のチェキ（現像中のように浮かび上がる） */
 .queue {
@@ -324,7 +331,20 @@ h2 small { font-size: 12px; color: var(--ink-soft); letter-spacing: .1em; }
   padding: calc(56px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
   color: #f6eee2;
 }
-.lb-stage { margin: 0; flex: 1; min-height: 0; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.lb-stage { position: relative; margin: 0; flex: 1; min-height: 0; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+/* チェキの白い余白に重ねるコメント（位置と大きさは app.js で画像に合わせる） */
+.lb-note {
+  position: absolute;
+  margin: 0;
+  transform: translateY(-50%);
+  text-align: center;
+  font-weight: 500;
+  line-height: 1.35;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+  color: #4f4336;
+  pointer-events: none;
+}
 .lb-stage img {
   max-width: 100%;
   max-height: calc(100% - 30px);
@@ -371,6 +391,8 @@ h2 small { font-size: 12px; color: var(--ink-soft); letter-spacing: .1em; }
   padding: 16px;
   padding-bottom: calc(16px + env(safe-area-inset-bottom));
 }
+.sheet.top { align-items: flex-start; padding-top: calc(48px + env(safe-area-inset-top)); }
+.sheet-input { margin-bottom: 18px; text-align: center; }
 .sheet-body {
   width: 100%;
   max-width: 440px;
