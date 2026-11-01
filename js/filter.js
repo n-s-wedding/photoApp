@@ -322,7 +322,9 @@
       height: h - top,
       left: spec.left * pxPerMm,
       width: w - spec.left * 2 * pxPerMm,
-      pxPerMm
+      pxPerMm,
+      // チェキを幅343pxで見るスマホで、縦長・横長とも約13pxになる大きさ
+      fontPx: w * 13 / 343
     };
   }
 
@@ -357,15 +359,15 @@
     const areaH = area.height;
     const maxW = area.width;
     const maxH = areaH - 4 * pxPerMm;
-    // 短いコメントは大きく、長いコメントは余白に収まるまで小さくする
-    let size = 4.4 * pxPerMm;
+    // 余白に収まらない長さのときだけ小さくする
+    let size = area.fontPx;
     let lines = [];
-    for (; size >= 2.2 * pxPerMm; size -= 0.2 * pxPerMm) {
+    for (; size >= area.fontPx * 0.6; size *= 0.92) {
       c.font = `500 ${size}px ${CAPTION_FONT}`;
       lines = wrapCaption(c, text, maxW);
       if (lines.length * size * 1.35 <= maxH) break;
     }
-    size = Math.max(size, 2.2 * pxPerMm);
+    size = Math.max(size, area.fontPx * 0.6);
     c.font = `500 ${size}px ${CAPTION_FONT}`;
     const lineH = size * 1.35;
     c.fillStyle = '#4f4336';

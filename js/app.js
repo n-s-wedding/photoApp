@@ -518,7 +518,8 @@
     placeLbNote();
     document.querySelectorAll('.seg button').forEach(b => b.classList.toggle('on', b.dataset.ver === state.lbVer));
     $('lbDelete').hidden = !item.mine;
-    $('lbComment').hidden = !item.mine;
+    // コメントが空なら誰でも書ける。入っているコメントを直せるのは送った本人だけ
+    $('lbComment').hidden = !item.mine && !!item.message;
     $('lbComment').textContent = item.message ? 'コメントを直す' : 'コメントを書く';
     // 長押しで保存した画像にはコメントが入らないので、ボタンでの保存を案内する
     $('lbHint').textContent = !item.message
@@ -546,8 +547,8 @@
     note.style.top = `${box.top - stage.top + area.top + area.height / 2}px`;
     // 余白に収まるまで文字を小さくする
     const maxH = area.height - 4 * area.pxPerMm;
-    for (let mm = 4.4; mm >= 2.2; mm -= 0.2) {
-      note.style.fontSize = `${mm * area.pxPerMm}px`;
+    for (let px = area.fontPx; px >= area.fontPx * 0.6; px *= 0.92) {
+      note.style.fontSize = `${px}px`;
       if (note.offsetHeight <= maxH) break;
     }
   }
@@ -603,6 +604,14 @@
           toast('コメントを保存しました');
         } catch (e) {
           console.warn(e);
+          if (e.code === 'forbidden') {
+            // 開いている間に他の人がコメントを書いた
+            closeSheet();
+            toast('先に他の方がコメントを書きました');
+            await refresh();
+            if (!$('lightbox').hidden) showLightbox();
+            return;
+          }
           okBtn.disabled = false;
           okBtn.textContent = 'コメントを保存';
           toast('保存できませんでした。もう一度お試しください');
