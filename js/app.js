@@ -72,6 +72,21 @@
   /* ---------- gallery ---------- */
   const tiles = new Map();
 
+  function setTileMessage(el, message) {
+    el.querySelector('img').alt = message || '写真';
+    let who = el.querySelector('.who');
+    if (!message) {
+      if (who) who.remove();
+      return;
+    }
+    if (!who) {
+      who = document.createElement('span');
+      who.className = 'who';
+      el.appendChild(who);
+    }
+    who.textContent = message;
+  }
+
   function buildTile(item) {
     const el = document.createElement('button');
     el.type = 'button';
@@ -82,17 +97,11 @@
     el.style.setProperty('--r', hashRot(item.id));
     el.style.setProperty('--ar', item.w && item.h ? `${item.w} / ${item.h}` : '54 / 86');
     const img = document.createElement('img');
-    img.alt = item.message || '写真';
     img.loading = 'lazy';
     img.decoding = 'async';
     setImg(img, item.id, wide ? THUMB * 2 : THUMB);
     el.appendChild(img);
-    if (item.message) {
-      const who = document.createElement('span');
-      who.className = 'who';
-      who.textContent = item.message;
-      el.appendChild(who);
-    }
+    setTileMessage(el, item.message);
     const check = document.createElement('span');
     check.className = 'check';
     el.appendChild(check);
@@ -146,6 +155,8 @@
       const ids = new Set(items.map(x => x.id));
       [...tiles.keys()].forEach(id => { if (!ids.has(id)) tiles.delete(id); });
       [...state.selected].forEach(id => { if (!ids.has(id)) state.selected.delete(id); });
+      // あとから書かれたコメントも一覧に反映する
+      items.forEach(x => { if (tiles.has(x.id)) setTileMessage(tiles.get(x.id), x.message); });
       if (changed || !$('gallery').children.length) render();
     } catch (e) {
       if (e.code === 'unauthorized') {
@@ -159,23 +170,63 @@
   }
 
   /* ---------- upload ---------- */
-  const messageInput = $('message');
+  // 選んだ写真はすぐ送らず、コメントを書けるように一度ここに並べる
+  const drafts = [];
 
-  async function handleFiles(fileList) {
+  function addDrafts(fileList) {
     const files = [...fileList].filter(f => /^image\//.test(f.type) || /\.(heic|heif|jpe?g|png|webp)$/i.test(f.name));
-    if (!files.length) return;
-    // 選んだ写真にだけメッセージを付け、次の写真用に欄を空にする
-    const message = messageInput.value.trim();
-    messageInput.value = '';
+    files.forEach(file => {
+      const draft = { file, url: URL.createObjectURL(file), el: document.createElement('div'), input: document.createElement('input') };
+      draft.el.className = 'c-item';
+      const img = document.createElement('img');
+      img.alt = '';
+      img.decoding = 'async';
+      img.src = draft.url;
+      draft.input.type = 'text';
+      draft.input.maxLength = 40;
+      draft.input.placeholder = 'コメント（なくてもOK）';
+      draft.input.autocomplete = 'off';
+      draft.input.setAttribute('aria-label', 'コメント');
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'c-remove';
+      remove.textContent = '×';
+      remove.setAttribute('aria-label', 'この写真をやめる');
+      remove.addEventListener('click', () => {
+        drafts.splice(drafts.indexOf(draft), 1);
+        discardDraft(draft);
+        renderCompose();
+      });
+      draft.el.append(img, draft.input, remove);
+      $('composeList').appendChild(draft.el);
+      drafts.push(draft);
+    });
+    renderCompose();
+  }
+
+  function discardDraft(draft) {
+    URL.revokeObjectURL(draft.url);
+    draft.el.remove();
+  }
+
+  function renderCompose() {
+    $('compose').hidden = !drafts.length;
+    $('composeSend').textContent = `${drafts.length}枚を送る`;
+  }
+
+  async function sendDrafts() {
     const queue = $('queue');
     queue.hidden = false;
-    const jobs = files.map(file => {
+    const jobs = drafts.splice(0).map(draft => {
       const el = document.createElement('div');
       el.className = 'q-item';
       el.innerHTML = '<div class="q-photo"><div class="q-blank"></div></div><span class="q-state">現像中…</span>';
       queue.prepend(el);
-      return { file, el, message };
+      const message = draft.input.value.trim();
+      discardDraft(draft);
+      return { file: draft.file, el, message };
     });
+    renderCompose();
     for (const job of jobs) await runJob(job);
   }
 
@@ -247,13 +298,18 @@
     });
   }
 
-  // 元写真の送信中にページを閉じようとしたら確認する
+  // 元写真の送信中や、選んだ写真を送る前にページを閉じようとしたら確認する
   window.addEventListener('beforeunload', e => {
-    if (state.pendingOriginals > 0) { e.preventDefault(); e.returnValue = ''; }
+    if (state.pendingOriginals > 0 || drafts.length > 0) { e.preventDefault(); e.returnValue = ''; }
   });
 
-  $('pickFiles').addEventListener('change', e => { handleFiles(e.target.files); e.target.value = ''; });
-  $('takePhoto').addEventListener('change', e => { handleFiles(e.target.files); e.target.value = ''; });
+  $('pickFiles').addEventListener('change', e => { addDrafts(e.target.files); e.target.value = ''; });
+  $('takePhoto').addEventListener('change', e => { addDrafts(e.target.files); e.target.value = ''; });
+  $('composeSend').addEventListener('click', sendDrafts);
+  $('composeCancel').addEventListener('click', () => {
+    drafts.splice(0).forEach(discardDraft);
+    renderCompose();
+  });
 
   /* ---------- selection ---------- */
   function onTileClick(id) {
@@ -295,7 +351,7 @@
   function askVersionThenSave(list) {
     openSheet({
       title: `${list.length}枚を保存`,
-      text: 'どちらの写真を保存しますか？',
+      text: 'どちらの写真を保存しますか？\nチェキ版にはコメントも入ります。',
       ok: 'チェキ版を保存',
       onOk: () => saveItems(list, 'cheki'),
       extra: { label: 'オリジナルを保存', onClick: () => saveItems(list, 'original') }
@@ -303,6 +359,16 @@
   }
 
   /* ---------- download ---------- */
+  // コメントは保存するときに書き入れる（ドライブの写真は書き換えない）
+  async function withCaption(blob, message) {
+    try {
+      return await window.ChekiFilter.addCaption(blob, message);
+    } catch (e) {
+      console.warn(e);
+      return blob;
+    }
+  }
+
   async function fetchFiles(list, ver, onProgress) {
     const out = new Array(list.length);
     let done = 0, next = 0;
@@ -311,7 +377,9 @@
         const i = next++;
         const item = list[i];
         const fileId = ver === 'original' ? (item.originalId || item.id) : item.id;
-        const { blob, name } = await api.getBlob(fileId);
+        const res = await api.getBlob(fileId);
+        const name = res.name;
+        const blob = fileId === item.id && item.message ? await withCaption(res.blob, item.message) : res.blob;
         out[i] = new File([blob], name || `photo_${i + 1}.jpg`, { type: blob.type || 'image/jpeg' });
         onProgress(++done / list.length);
       }
@@ -378,12 +446,18 @@
   }
 
   /* ---------- sheet ---------- */
-  function openSheet({ title, text, progress, ok, onOk, extra }) {
+  function openSheet({ title, text, progress, ok, onOk, extra, input }) {
     $('sheetTitle').textContent = title || '';
     $('sheetText').textContent = text || '';
     $('sheetProgress').hidden = !progress;
     setProgress(0);
+    const hasInput = input !== undefined;
+    $('sheetInput').hidden = !hasInput;
+    $('sheetInput').value = input || '';
+    // 入力するときはキーボードに隠れないよう画面の上に出す
+    $('sheet').classList.toggle('top', hasInput);
     const okBtn = $('sheetOk');
+    okBtn.disabled = false;
     okBtn.hidden = !ok;
     okBtn.textContent = ok || '';
     okBtn.onclick = onOk || null;
@@ -399,6 +473,7 @@
       okBtn.after(b);
     }
     $('sheet').hidden = false;
+    if (hasInput) $('sheetInput').focus();
   }
   function closeSheet() { $('sheet').hidden = true; }
   function setProgress(p) { $('sheetProgress').firstElementChild.style.width = Math.round(p * 100) + '%'; }
@@ -436,13 +511,45 @@
     big.dataset.ver = state.lbVer;
     setImg(big, fileId, 1600);
     preloadNeighbors();
-    $('lbCaption').textContent = state.lbVer === 'original' && !item.originalId
-      ? '元写真はまだ届いていません（チェキ版を表示中）'
-      : item.message || '';
+    // チェキ版のコメントは白い余白に出す。余白のないオリジナルだけ写真の下に出す
+    $('lbCaption').textContent = state.lbVer !== 'original'
+      ? ''
+      : item.originalId ? item.message || '' : '元写真はまだ届いていません（チェキ版を表示中）';
+    placeLbNote();
     document.querySelectorAll('.seg button').forEach(b => b.classList.toggle('on', b.dataset.ver === state.lbVer));
     $('lbDelete').hidden = !item.mine;
+    $('lbComment').hidden = !item.mine;
+    $('lbComment').textContent = item.message ? 'コメントを直す' : 'コメントを書く';
+    // 長押しで保存した画像にはコメントが入らないので、ボタンでの保存を案内する
+    $('lbHint').textContent = !item.message
+      ? '画像を長押ししても保存できます'
+      : state.lbVer === 'original' && item.originalId
+        ? 'オリジナルにはコメントは入りません'
+        : '「保存」を押すと、コメント入りで保存できます';
     $('lbPrev').hidden = state.lbIndex <= 0;
     $('lbNext').hidden = state.lbIndex >= list.length - 1;
+  }
+  // 保存した画像と同じように、チェキの白い余白にコメントを重ねる
+  function placeLbNote() {
+    const note = $('lbNote');
+    const img = $('lbImg');
+    const item = visibleItems()[state.lbIndex];
+    const show = item && item.message && (state.lbVer === 'cheki' || !item.originalId) && img.naturalWidth;
+    note.hidden = !show;
+    if (!show) return;
+    const box = img.getBoundingClientRect();
+    const stage = note.parentElement.getBoundingClientRect();
+    const area = window.ChekiFilter.captionArea(box.width, box.height);
+    note.textContent = item.message;
+    note.style.left = `${box.left - stage.left + area.left}px`;
+    note.style.width = `${area.width}px`;
+    note.style.top = `${box.top - stage.top + area.top + area.height / 2}px`;
+    // 余白に収まるまで文字を小さくする
+    const maxH = area.height - 4 * area.pxPerMm;
+    for (let mm = 4.4; mm >= 2.2; mm -= 0.2) {
+      note.style.fontSize = `${mm * area.pxPerMm}px`;
+      if (note.offsetHeight <= maxH) break;
+    }
   }
   function preloadNeighbors() {
     const list = visibleItems();
@@ -457,6 +564,8 @@
     showLightbox();
   }
 
+  $('lbImg').addEventListener('load', placeLbNote);
+  window.addEventListener('resize', () => { if (!$('lightbox').hidden) placeLbNote(); });
   $('lbClose').addEventListener('click', closeLightbox);
   $('lbPrev').addEventListener('click', () => stepLightbox(-1));
   $('lbNext').addEventListener('click', () => stepLightbox(1));
@@ -467,6 +576,39 @@
   $('lbSave').addEventListener('click', () => {
     const item = visibleItems()[state.lbIndex];
     if (item) saveItems([item], state.lbVer);
+  });
+  $('lbComment').addEventListener('click', () => {
+    const item = visibleItems()[state.lbIndex];
+    if (!item) return;
+    const id = item.id;
+    const before = item.message || '';
+    openSheet({
+      title: before ? 'コメントを直す' : 'コメントを書く',
+      text: 'アルバムに表示され、保存するチェキの余白にも入ります。',
+      input: before,
+      ok: 'コメントを保存',
+      onOk: async () => {
+        const message = $('sheetInput').value.trim();
+        if (message === before) return closeSheet();
+        const okBtn = $('sheetOk');
+        okBtn.disabled = true;
+        okBtn.textContent = '保存中…';
+        try {
+          await api.setMessage(id, message);
+          state.items.forEach(x => { if (x.id === id) x.message = message; });
+          saveList();
+          if (tiles.has(id)) setTileMessage(tiles.get(id), message);
+          if (!$('lightbox').hidden) showLightbox();
+          closeSheet();
+          toast('コメントを保存しました');
+        } catch (e) {
+          console.warn(e);
+          okBtn.disabled = false;
+          okBtn.textContent = 'コメントを保存';
+          toast('保存できませんでした。もう一度お試しください');
+        }
+      }
+    });
   });
   $('lbDelete').addEventListener('click', async () => {
     const item = visibleItems()[state.lbIndex];
@@ -494,7 +636,7 @@
     touchX = null;
   });
   document.addEventListener('keydown', e => {
-    if ($('lightbox').hidden) return;
+    if ($('lightbox').hidden || !$('sheet').hidden) return;
     if (e.key === 'Escape') closeLightbox();
     if (e.key === 'ArrowLeft') stepLightbox(-1);
     if (e.key === 'ArrowRight') stepLightbox(1);
